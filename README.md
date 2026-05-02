@@ -1,66 +1,82 @@
 # Secret Agents — LLM-Powered Interactive Game
 
-**Secret Agents** is a small web-based spy game that demonstrates the core architecture of a practical agentic application. A player interacts through a browser chat UI, while a Flask backend coordinates mission state, tool calls, LLM responses, and an audit log.
+---
 
-This is **not just a chatbot**. The LLM acts as a mission controller inside a bounded software loop. It can decide that a tool is needed, but Python validates the request, executes only known tools, persists state, and records what happened.
+## Table of Contents
+
+- [Summary](#summary)
+- [Why This Matters](#why-this-matters)
+- [Real-World Utility](#real-world-utility)
+- [Architecture](#architecture)
+  - [System Architecture](#system-architecture)
+  - [Agent Control Flow](#agent-control-flow)
+- [Repository Layout](#repository-layout)
+- [Requirements](#requirements)
+- [Setup](#setup)
+  - [Linux / macOS](#linux--macos)
+  - [Windows PowerShell](#windows-powershell)
+- [Run the App](#run-the-app)
+- [Demo Script](#demo-script)
+- [Inspect State, Logs, and Ratings](#inspect-state-logs-and-ratings)
+- [LLM Protocol](#llm-protocol)
+- [Tools](#tools)
+- [Tests](#tests)
+- [Troubleshooting](#troubleshooting)
+- [Scope / Non-Goals](#scope--non-goals)
+- [Future Improvements](#future-improvements)
+- [Key Takeaway](#key-takeaway)
+
+## Summary
+
+**Secret Agents** is a small Flask-based spy game that demonstrates practical agentic application architecture. A player chats with Mission Control in the browser, while an LLM coordinates the mission through a strict JSON protocol.
+
+The key design boundary is simple:
+
+```text
+LLM = planner/controller
+Python = validator/executor
+JSON = protocol
+game_state.json = source of truth
+mission_log.json = audit trail
+ratings = lightweight evaluation data
+```
+
+This is not just a chatbot. The model can decide that a tool is needed, but Python validates the request, executes only known tools, persists mission state, and records what happened.
 
 ---
 
-## What It Demonstrates
+## Why This Matters
 
-Secret Agents is a toy spy game wrapped around a serious software pattern:
+Secret Agents demonstrates the minimum useful shape of a bounded agentic system:
 
-```markdown
+```text
 Player message
 -> Flask / Socket.IO
--> load game_state.json
--> LLM JSON protocol
--> optional tool call
--> Python tool validation/execution
+-> load mission state
+-> LLM JSON response
+-> optional Python tool call
 -> state update
--> mission_log.json audit trail
+-> audit log
 -> browser response
 ```
 
-The project demonstrates:
-
-- **LLM as planner/controller** — the model helps decide the next mission action.
-- **Python as bounded executor** — the backend validates and executes tools safely.
-- **JSON as protocol** — the LLM must return parseable responses instead of vague natural language.
-- **Tools/gadgets as controlled capabilities** — weather and Caesar cipher tools are explicitly exposed.
-- **Game state as source of truth** — mission progress is stored outside the LLM.
-- **Mission log as audit trail** — messages, tool calls, results, and feedback are inspectable.
-- **Ratings as lightweight evaluation data** — player feedback can be used to review and improve agent behavior.
-
-The spy theme is intentionally small. The real lesson is how to build an LLM app where the model can coordinate a workflow without owning unsafe execution.
+The spy-game theme is intentionally small. The practical lesson is how to let an LLM coordinate a workflow without giving it uncontrolled execution authority.
 
 ---
 
 ## Real-World Utility
 
-The same architecture can be used beyond games.
+The same pattern can support:
 
-| Secret Agents Pattern | Real-World Equivalent |
-|---|---|
-| Mission phases | Workflow stages |
-| Weather gadget | External API/tool call |
-| Decryptor gadget | Bounded utility function |
-| Mission state | Ticket/case/task state |
-| Mission log | Audit trail / evaluation log |
-| Rating dropdown | Human feedback signal |
+- **Customer support workflow assistants** — guide agents through account checks, policies, and resolution steps.
+- **Incident response assistants** — coordinate triage, diagnostics, runbook steps, and closure.
+- **Deployment checklist assistants** — track release readiness and bounded verification steps.
+- **Onboarding/training simulators** — move learners through structured scenarios with feedback.
+- **Internal platform assistants** — expose approved tools while preserving validation, state, and logs.
 
-Potential applications:
+Useful pattern:
 
-- **Customer support workflow assistant** — guide a support agent through account checks, policy steps, and resolution paths.
-- **Incident response assistant** — coordinate triage, diagnostics, runbook steps, and closure.
-- **Internal platform assistant** — help engineers inspect services, docs, deployments, and environment state.
-- **Deployment checklist assistant** — track release readiness and call bounded verification tools.
-- **Onboarding/training simulator** — guide learners through structured scenarios with feedback.
-- **Tool-using AI assistant with guardrails** — expose only approved tools and log every decision.
-
-The useful pattern is:
-
-```markdown
+```text
 LLM proposes.
 Software validates.
 Tools execute.
@@ -72,45 +88,32 @@ Logs explain.
 
 ## Architecture
 
-## Architecture Diagram
+### System Architecture
 
 ```mermaid
 flowchart TD
-    A[Browser Chat UI<br/>templates/index.html] -->|Socket.IO message| B[Flask App<br/>app.py]
+    A["Browser Chat UI<br/><code>templates/index.html</code>"]
+    B["Flask App<br/><code>app.py</code><br/>receives messages<br/>routes mission<br/>emits responses"]
+    C["Game State<br/><code>game_state.json</code><br/>source of truth"]
+    D["Mission Log<br/><code>mission_log.json</code><br/>audit trail + ratings"]
+    E["LLM Interface<br/><code>llm/llm_interface.py</code><br/>builds prompt<br/>calls Ollama<br/>parses JSON"]
+    F["Tool Executor<br/><code>utils/tool_executor.py</code><br/>validates tool names<br/>validates params<br/>blocks unknowns"]
+    G["Gadgets<br/><code>weather.py</code><br/><code>decryptor.py</code>"]
 
-    B --> C[Load Mission State<br/>game_state.json]
-    B --> D[Append Audit Entry<br/>mission_log.json]
-
-    B --> E[LLM Interface<br/>llm/llm_interface.py]
-    E -->|Prompt includes player message + state| F[Local LLM via Ollama<br/>llama3.1 or equivalent]
-
-    F -->|Strict JSON response| E
-    E -->|Parsed JSON| B
-
-    B -->|If type = tool_call| G[Tool Executor<br/>utils/tool_executor.py]
-    G -->|Validate tool name + params| H{Allowed Tool?}
-
-    H -->|weather| I[Weather Gadget<br/>gadgets/weather.py]
-    H -->|decryptor| J[Decryptor Gadget<br/>gadgets/decryptor.py]
-    H -->|unknown / invalid| K[Safe Error Result]
-
-    I --> L[Tool Result]
-    J --> L
-    K --> L
-
-    L --> B
-    B -->|Tool result back to LLM or deterministic fallback| E
-
-    B --> M[Apply State Update<br/>utils/game_state.py]
-    M --> C
-
-    B --> N[Save Interaction / Tool Result / Rating<br/>utils/mission_log.py]
-    N --> D
-
-    B -->|Socket.IO response| A
+    A -->|"Socket.IO"| B
+    B --> C
+    B --> D
+    B --> E
+    E -->|"strict JSON"| B
+    B -->|"tool_call"| F
+    F --> G
+    G -->|"tool result"| B
+    B -->|"state_update"| C
+    B -->|"log entry / rating"| D
+    B -->|"Socket.IO response"| A
 ```
 
-### Agentic Control Boundary
+### Agent Control Flow
 
 ```mermaid
 sequenceDiagram
@@ -124,201 +127,149 @@ sequenceDiagram
 
     Player->>UI: Send mission message
     UI->>Flask: socket.emit("message")
-    Flask->>State: Load current mission state
+    Flask->>State: Load mission state
     Flask->>LLM: Prompt with message + state
-    LLM-->>Flask: JSON: final or tool_call
+    LLM-->>Flask: JSON final or tool_call
 
-    alt LLM requests allowed tool
+    alt tool_call
         Flask->>Tools: Validate tool + parameters
-        Tools-->>Flask: Structured tool result
-        Flask->>LLM: Send tool result for final response
+        Tools-->>Flask: Structured result
+        Flask->>LLM: Send tool result
         LLM-->>Flask: JSON final response
-    else No tool needed
-        Flask->>Flask: Use final response
+    else final
+        Flask->>Flask: Use response
     end
 
     Flask->>State: Save state_update if present
-    Flask->>Log: Record message, tool call, result, response
+    Flask->>Log: Record message, tools, results, ratings
     Flask-->>UI: socket.emit("response")
-    UI-->>Player: Display agent response
+    UI-->>Player: Display response
 ```
 
+---
 
-```markdown
-┌────────────────────┐
-│ Browser Chat UI    │
-│ templates/index.html
-└─────────┬──────────┘
-          │ Socket.IO
-          ▼
-┌────────────────────┐
-│ Flask App          │
-│ app.py             │
-│ - receives message │
-│ - routes mission   │
-│ - emits response   │
-└─────────┬──────────┘
-          │
-          ├───────────────┐
-          ▼               ▼
-┌────────────────┐   ┌─────────────────┐
-│ game_state.json│   │ mission_log.json │
-│ source of truth│   │ audit trail      │
-└────────────────┘   └─────────────────┘
-          │
-          ▼
-┌────────────────────┐
-│ LLM Interface      │
-│ llm/llm_interface.py
-│ - builds prompt    │
-│ - calls Ollama     │
-│ - parses JSON      │
-└─────────┬──────────┘
-          │ tool_call JSON
-          ▼
-┌────────────────────┐
-│ Tool Executor      │
-│ utils/tool_executor.py
-│ - validates tool   │
-│ - validates params │
-│ - blocks unknowns  │
-└─────────┬──────────┘
-          │
-          ▼
-┌────────────────────┐
-│ Gadgets            │
-│ weather.py         │
-│ decryptor.py       │
-└────────────────────┘
+## Repository Layout
+
+```text
+secret-agents/
+├── README.md
+└── src/
+    ├── app.py
+    ├── requirements.txt
+    ├── game_state.json
+    ├── mission_log.json
+    ├── templates/
+    ├── gadgets/
+    ├── llm/
+    ├── utils/
+    └── tests/
 ```
-
-### Main Agent Loop
-
-1. Player sends a message through the browser.
-2. Flask receives it through Socket.IO.
-3. Flask loads the current mission state.
-4. The LLM receives the message and state.
-5. The LLM returns strict JSON.
-6. If the JSON requests a tool, Python validates and executes the tool.
-7. Tool result is used to generate a final response.
-8. State updates are saved to `game_state.json`.
-9. The interaction is recorded in `mission_log.json`.
-10. Flask emits the final response to the browser.
 
 ---
 
 ## Requirements
 
-- Python 3.10+ or 3.11+
-- `pip`
-- `venv`
+- Python 3.10+
+- [`uv`](https://docs.astral.sh/uv/) for Python environment/dependency management
 - Browser
 - Ollama for local LLM use
 - A local model such as `llama3.1`
 
-The app can still demonstrate deterministic fallback behavior if the LLM is unavailable, but the intended setup uses Ollama.
+The deterministic routing/fallbacks keep the demo stable, but the intended setup uses Ollama.
 
 ---
 
-## Setup Instructions
+## Setup
+
+This project works with the existing `requirements.txt`; no code changes are required for `uv`.
+
+### Install `uv`
+
+Linux / macOS:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+After installation, open a new terminal or reload your shell.
 
 ### Linux / macOS
 
-From the folder where you unzipped or cloned the project:
-
 ```bash
-cd secret_agents/src
+cd <repo-folder>/src
 
-python -m venv .venv
+uv venv
 source .venv/bin/activate
 
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
-Install and start Ollama if it is not already running:
+Start Ollama in another terminal if it is not already running:
 
 ```bash
 ollama serve
 ```
 
-In another terminal:
+Pull the model:
 
 ```bash
 ollama pull llama3.1
 ollama list
 ```
-
-Run the app:
-
-```bash
-python app.py
-```
-
-Open:
-
-```markdown
-http://localhost:8080
-```
-
----
 
 ### Windows PowerShell
 
-From the folder where you unzipped or cloned the project:
-
 ```powershell
-cd secret_agents\src
+cd <repo-folder>\src
 
-python -m venv .venv
+uv venv
 .\.venv\Scripts\Activate.ps1
 
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
-Install and start Ollama using the Windows installer from Ollama's website. Then pull the model:
+Pull the model:
 
 ```powershell
 ollama pull llama3.1
 ollama list
 ```
 
-Run the app:
-
-```powershell
-python app.py
-```
-
-Open:
-
-```markdown
-http://localhost:8080
-```
-
-If PowerShell blocks virtual environment activation, run:
+If PowerShell blocks virtual environment activation:
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-Then activate the environment again.
 
 ---
 
-## Running the App
+## Run the App
 
-From `secret_agents/src`:
+From `src/`:
+
+```bash
+uv run python app.py
+```
+
+Or, if your virtual environment is already activated:
 
 ```bash
 python app.py
 ```
 
-Then open:
+Open:
 
-```markdown
+```text
 http://localhost:8080
 ```
 
-Use the chat box to play the mission.
 
 ---
 
@@ -326,7 +277,7 @@ Use the chat box to play the mission.
 
 Use this sequence for a clean Phase 2 demo:
 
-```markdown
+```text
 Start new mission
 Where am I going?
 Check the weather before I choose a disguise.
@@ -335,153 +286,20 @@ Decode the intercepted message
 Mission complete. The package was recovered.
 ```
 
-### 1. Start new mission
+Expected flow:
 
-Player:
+1. **Start new mission** — initializes persistent mission state.
+2. **Where am I going?** — reads destination from `game_state.json`.
+3. **Check the weather...** — runs the weather gadget and recommends a disguise.
+4. **I will pack...** — stores disguise and presents the cipher challenge.
+5. **Decode the intercepted message** — runs the decryptor using mission state.
+6. **Mission complete...** — closes the mission and saves completion state.
 
-```markdown
-Start new mission
-```
-
-Expected behavior:
-
-- Mission state is reset or initialized.
-- The agent introduces the operation.
-- The mission begins in the briefing phase.
-
-What to explain:
-
-> This initializes persistent state. The app is not relying only on chat memory.
+This demo shows stateful workflow progress, bounded tool use, and inspectable logs.
 
 ---
 
-### 2. Ask destination
-
-Player:
-
-```markdown
-Where am I going?
-```
-
-Expected behavior:
-
-- Agent identifies the destination.
-- Agent points the player toward checking weather.
-
-What to explain:
-
-> The destination comes from `game_state.json`. The agent uses application state.
-
----
-
-### 3. Check weather
-
-Player:
-
-```markdown
-Check the weather before I choose a disguise.
-```
-
-Expected behavior:
-
-- Weather tool runs for the mission city.
-- Agent recommends a disguise based on weather.
-- Mission phase advances.
-
-What to explain:
-
-> This is the key tool-using moment. The LLM can request a tool, but Python validates and executes it.
-
----
-
-### 4. Confirm disguise
-
-Player:
-
-```markdown
-I will pack sunglasses and a light jacket.
-```
-
-Expected behavior:
-
-- Disguise is saved.
-- Intercepted Caesar cipher message is presented.
-
-What to explain:
-
-> The app tracks workflow progress. It is not just responding conversationally.
-
----
-
-### 5. Decode intercepted message
-
-Player:
-
-```markdown
-Decode the intercepted message
-```
-
-Expected behavior:
-
-- Decryptor tool runs using the mission ciphertext and shift.
-- Agent reports the decoded message or confirms decoding.
-- Mission phase advances to decoded.
-
-What to explain:
-
-> The player does not need to repeat the ciphertext. The tool parameters come from mission state.
-
----
-
-### 6. Complete mission
-
-Player:
-
-```markdown
-Mission complete. The package was recovered.
-```
-
-Expected behavior:
-
-- Mission closes.
-- `game_state.json` marks the mission complete.
-
-What to explain:
-
-> This demonstrates a terminal workflow state, similar to closing a ticket or incident.
-
----
-
-## Showing Ratings / Feedback
-
-After an agent response, select a rating in the UI and submit it.
-
-The rating is optional. It does not control mission progress.
-
-It demonstrates a simple feedback hook:
-
-```markdown
-agent response
--> human rating
--> mission_log.json
--> later review/evaluation
-```
-
-To inspect ratings:
-
-```bash
-cat mission_log.json | python -m json.tool
-```
-
-Look for rating entries, often under a `ratings` list or as log entries depending on implementation.
-
-What to say during a demo:
-
-> Ratings are lightweight human feedback. In a real system, they could become an evaluation dataset showing which responses were useful, where the agent got stuck, and which tool flows need improvement.
-
----
-
-## Inspecting State and Logs
+## Inspect State, Logs, and Ratings
 
 ### Linux / macOS
 
@@ -497,64 +315,17 @@ Get-Content game_state.json | python -m json.tool
 Get-Content mission_log.json | python -m json.tool
 ```
 
-### What These Files Mean
+`game_state.json` stores the source of truth for mission progress, including phase, destination, disguise, cipher data, and completion status.
 
-`game_state.json` is the source of truth for mission progress.
+`mission_log.json` stores the audit trail: player messages, LLM responses, tool calls, tool results, final responses, and optional ratings.
 
-It may include:
-
-- mission ID
-- active/completed status
-- mission phase
-- destination
-- city
-- weather summary
-- disguise
-- ciphertext
-- cipher shift
-- decoded message
-- objective
-
-`mission_log.json` is the audit trail.
-
-It may include:
-
-- player messages
-- LLM responses
-- tool requests
-- tool results
-- final responses
-- ratings
-- errors or fallback behavior
-
-This makes the agent inspectable and debuggable.
-
----
-
-## Running Tests
-
-From `secret_agents/src`:
-
-```bash
-python -m compileall .
-python tests/smoke_phase1.py
-python tests/smoke_phase2.py
-python -m json.tool game_state.json
-python -m json.tool mission_log.json
-```
-
-Passing tests should show that:
-
-- Python files compile.
-- Phase 1 tools work.
-- Phase 2 mission flow works.
-- JSON files are valid.
+To show ratings during a demo, submit a rating in the UI after an agent response, then inspect `mission_log.json`.
 
 ---
 
 ## LLM Protocol
 
-The project expects the LLM to return strict JSON.
+The LLM must return strict JSON.
 
 ### Final response
 
@@ -574,7 +345,7 @@ The project expects the LLM to return strict JSON.
   "parameters": {
     "city": "Paris"
   },
-  "reason": "The player needs weather data before choosing a disguise."
+  "reason": "Weather is needed before choosing a disguise."
 }
 ```
 
@@ -590,21 +361,15 @@ The project expects the LLM to return strict JSON.
 }
 ```
 
-Strict JSON matters because the backend needs to parse and validate model output. The model is not allowed to execute tools directly. It can only request tool execution through the protocol.
+The model requests actions through JSON. Python decides whether the request is valid and safe to execute.
 
 ---
 
-## Available Tools / Gadgets
+## Tools
 
 ### Weather
 
-Purpose:
-
-```markdown
-Get simple weather information for a city.
-```
-
-Example tool-call JSON:
+Gets simple weather information for a city.
 
 ```json
 {
@@ -612,29 +377,13 @@ Example tool-call JSON:
   "tool": "weather",
   "parameters": {
     "city": "Paris"
-  },
-  "reason": "Weather is needed before choosing a disguise."
+  }
 }
 ```
 
-Expected backend behavior:
-
-- Validate `city`.
-- Run the weather gadget.
-- Return a structured result.
-- Log the tool call and result.
-
----
-
 ### Decryptor
 
-Purpose:
-
-```markdown
-Decode a Caesar cipher message.
-```
-
-Example tool-call JSON:
+Decodes a Caesar cipher message.
 
 ```json
 {
@@ -643,96 +392,63 @@ Example tool-call JSON:
   "parameters": {
     "ciphertext": "KHOOR",
     "shift": 3
-  },
-  "reason": "The player wants to decode the intercepted message."
+  }
 }
 ```
 
-Expected backend behavior:
+Unknown tools and missing parameters return safe error results instead of executing arbitrary behavior.
 
-- Validate `ciphertext`.
-- Validate `shift`.
-- Run the decryptor gadget.
-- Return decoded text.
-- Log the tool call and result.
+---
+
+## Tests
+
+From `src/`:
+
+```bash
+uv run python -m compileall .
+uv run python tests/smoke_phase1.py
+uv run python tests/smoke_phase2.py
+uv run python -m json.tool game_state.json
+uv run python -m json.tool mission_log.json
+```
+
+If your virtual environment is already activated, `python ...` works too.
+
 
 ---
 
 ## Troubleshooting
 
-### Flask is not installed
-
-Symptom:
-
-```markdown
-ModuleNotFoundError: No module named 'flask'
-```
-
-Fix:
+### Dependencies missing
 
 ```bash
-source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
-On Windows:
+If you have not created the environment yet:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+Windows:
 
 ```powershell
+uv venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
-
----
-
-### Port already in use
-
-Symptom:
-
-```markdown
-Address already in use
-```
-
-Fix: stop the other process or change the port in `app.py`.
-
-On Linux/macOS, find the process:
-
-```bash
-lsof -i :8080
-```
-
----
 
 ### Ollama is not running
 
-Symptom:
-
-```markdown
-Connection refused
-```
-
-Fix:
-
 ```bash
 ollama serve
-```
-
-Then in another terminal:
-
-```bash
 ollama list
 ```
 
----
-
 ### Model not found
-
-Symptom:
-
-```markdown
-model 'llama3.1' not found
-```
-
-Fix:
 
 ```bash
 ollama pull llama3.1
@@ -744,109 +460,49 @@ Or update the model name in `llm/llm_interface.py` to match a model from:
 ollama list
 ```
 
----
+### Port already in use
 
-### LLM returns malformed JSON
+The app uses:
 
-Symptom:
+```text
+http://localhost:8080
+```
 
-- The app gives a fallback message.
-- Terminal logs JSON parsing errors.
-- The model responds in natural language instead of JSON.
+Stop the process using the port, or change the port in `app.py`.
 
-Fixes:
+Linux/macOS helper:
 
-- Use a better local model.
-- Lower model temperature.
-- Check the system prompt in `llm_interface.py`.
-- Keep deterministic fallbacks enabled for demo stability.
+```bash
+lsof -i :8080
+```
 
----
+### Malformed JSON or fallback response
 
-### App hangs or gives fallback response
-
-Check:
+If the LLM returns natural language instead of JSON, the app may use a fallback response. Check:
 
 ```bash
 cat mission_log.json | python -m json.tool
 ```
 
-Look for:
+Then verify:
 
-- malformed LLM responses
-- unknown tool names
-- missing parameters
-- repeated tool calls
-- failed final response generation
-
-Restart the app after code changes:
-
-```bash
-python app.py
-```
+- Ollama is running.
+- The model name is correct.
+- The system prompt in `llm/llm_interface.py` still requires JSON.
+- Deterministic fallback routing is enabled.
 
 ---
 
-### Weather/disguise routing confusion
+## Scope / Non-Goals
 
-Symptom:
-
-```markdown
-Check the weather before I choose a disguise.
-```
-
-gets interpreted as choosing a disguise.
-
-Fix:
-
-- Weather/decode routing should run before disguise-selection routing.
-- Specific command detection should happen before broad keyword matching.
-- Add regression tests for phrases that contain multiple intent keywords.
-
----
-
-### JSON files invalid
-
-Symptom:
-
-```markdown
-json.decoder.JSONDecodeError
-```
-
-Fix:
-
-```bash
-python -m json.tool game_state.json
-python -m json.tool mission_log.json
-```
-
-If needed, reset `mission_log.json` to:
-
-```json
-{
-  "conversation": [],
-  "ratings": []
-}
-```
-
-Reset `game_state.json` using the app's start mission command or the helper function in `utils/game_state.py`.
-
----
-
-## Scope and Non-Goals
-
-This project intentionally stays small.
-
-It does **not** include:
+This project intentionally does not include:
 
 - database
 - authentication
 - production deployment
-- user accounts
 - arbitrary tool execution
 - unrestricted agent autonomy
 - multiple mission campaigns
-- real weather API keys by default
 - complex policy engine
 
 The goal is to demonstrate the architecture clearly, not to build a full game platform.
@@ -855,29 +511,21 @@ The goal is to demonstrate the architecture clearly, not to build a full game pl
 
 ## Future Improvements
 
-Possible extensions:
-
-- Add more gadgets:
-  - translator
-  - timezone converter
-  - clue lookup
-  - code-name generator
-- Add structured UI buttons for suggested actions.
+- Add more bounded gadgets.
+- Add structured UI action buttons.
 - Add more missions.
-- Add a real weather API after the fake weather tool is stable.
-- Build a small evaluation dashboard from ratings.
-- Add stronger guardrails around unsupported requests.
+- Add a real weather API.
+- Add a ratings/evaluation dashboard.
 - Add regression tests for full mission transcripts.
-- Add a reset button in the UI.
-- Add better visualization of mission phase and state.
+- Add a visible mission-state panel in the UI.
 
 ---
 
 ## Key Takeaway
 
-Secret Agents demonstrates the minimum practical shape of an agentic application:
+Secret Agents demonstrates a practical agentic software pattern:
 
-```markdown
+```text
 The LLM plans.
 Python validates and executes.
 JSON defines the protocol.
@@ -886,4 +534,4 @@ Logs make behavior inspectable.
 Feedback creates evaluation data.
 ```
 
-The spy game is small, but the pattern scales to useful systems: support workflows, incident response, deployment checklists, onboarding assistants, internal platform tools, and governed automation.
+The game is small, but the architecture scales to support workflows, incident response, and deployment checklists.

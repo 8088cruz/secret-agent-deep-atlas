@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secret Agents</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 2rem auto;
+            max-width: 760px;
+            line-height: 1.4;
+        }
+
+        #chat-box {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        #messages {
+            min-height: 260px;
+            padding-left: 1.25rem;
+        }
+
+        #messages li {
+            margin: 0.5rem 0;
+        }
+
+        #user-message {
+            width: 70%;
+            padding: 0.5rem;
+        }
+
+        button {
+            padding: 0.5rem 0.75rem;
+            cursor: pointer;
+        }
+
+        .rating-block {
+            margin-top: 0.4rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Secret Agents</h1>
+    <p>Send a command to Mission Control.</p>
+
+    <div id="chat-box">
+        <ul id="messages"></ul>
+        <input id="user-message" placeholder="Type your command..." autocomplete="off">
+        <button id="send-btn">Send</button>
+    </div>
+
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        const messages = document.getElementById('messages');
+        const input = document.getElementById('user-message');
+        const sendButton = document.getElementById('send-btn');
+
+        function appendMessage(prefix, message) {
+            const li = document.createElement('li');
+            li.innerText = `${prefix}: ${message}`;
+            messages.appendChild(li);
+            return li;
+        }
+
+        function sendMessage() {
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            appendMessage('You', msg);
+            socket.emit('message', msg);
+            input.value = '';
+        }
+
+        sendButton.addEventListener('click', sendMessage);
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        socket.on('response', function (data) {
+            const message = (data && data.message) ? data.message : '';
+            if (!message.trim()) return;
+
+            const li = appendMessage('Agent', message);
+
+            const ratingDiv = document.createElement('div');
+            ratingDiv.className = 'rating-block';
+            ratingDiv.innerHTML = `
+                <label>Rate this interaction:</label>
+                <select class="rating">
+                    <option value="">Select</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                </select>
+                <button class="rate-btn">Submit</button>
+            `;
+            li.appendChild(ratingDiv);
+
+            ratingDiv.querySelector('.rate-btn').addEventListener('click', function () {
+                const rating = ratingDiv.querySelector('.rating').value;
+                if (rating) {
+                    socket.emit('rate_interaction', { message: message, rating: rating });
+                    ratingDiv.innerHTML = `Rating submitted: ${rating}`;
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>

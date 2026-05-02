@@ -1,0 +1,16 @@
+{
+    "current_mission": {
+        "mission_id": "mission-001",
+        "active": false,
+        "completed": true,
+        "mission_phase": "complete",
+        "destination": "France",
+        "city": "Paris",
+        "weather_summary": "Weather in Paris: Sunny, 25\u00b0C",
+        "disguise": "sunglasses and a light jacket",
+        "ciphertext": "JVUNYHABSHAPVUZ HNLUA",
+        "cipher_shift": 7,
+        "decoded_message": "CONGRATULATIONS AGENT",
+        "objective": "Recover the package and report back to mission control."
+    }
+}
